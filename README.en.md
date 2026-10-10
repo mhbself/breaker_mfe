@@ -1,8 +1,8 @@
-# Spirit Breaker — MetaTrader 5
+# breaker_mfe — MetaTrader 5
 
 English | [فارسی](README.md)
 
-An **MQL5** indicator and Expert Advisor for displaying and trading **Fresh Fractal / Dragon** setups within a configurable session. The project uses the source name `breaker_fork` and is forked from `breaker v0.11.18`. The original project also belonged to the same creator. This version adds risk-based position sizing, reduced volume after losing stop-loss exits, and break-even management.
+An **MQL5** indicator and Expert Advisor for displaying and trading **Fresh Fractal / Dragon** setups within a configurable session. The project uses the source name `breaker_mfe` and is forked from `breaker v0.11.18`. The original project also belonged to the same creator. This version adds risk-based position sizing, reduced volume after losing stop-loss exits, and break-even management.
 
 **Latest version in this folder: `v0.1.6`** · Documentation checked against source: `2026-10-11`
 
@@ -10,8 +10,8 @@ An **MQL5** indicator and Expert Advisor for displaying and trading **Fresh Frac
 
 | Component | Current source | Purpose |
 | --- | --- | --- |
-| Indicator | [breaker_fork_v0.1.6.mq5](breaker_fork_v0.1.6.mq5) | Displays session times, fractals, direction, reversals, entries, and stop candles; does not place orders |
-| Expert Advisor | [breaker_fork_ea_v0.1.6.mq5](breaker_fork_ea_v0.1.6.mq5) | Includes analysis, market orders, position sizing, and stop management |
+| Indicator | [breaker_mfe_v0.1.6.mq5](breaker_mfe_v0.1.6.mq5) | Displays session times, fractals, direction, reversals, entries, and stop candles; does not place orders |
+| Expert Advisor | [breaker_mfe_ea_v0.1.6.mq5](breaker_mfe_ea_v0.1.6.mq5) | Includes analysis, market orders, position sizing, and stop management |
 
 The EA contains its own analysis logic and does not require a separate indicator installation or call. Both components use the current chart's symbol and timeframe.
 
@@ -41,8 +41,8 @@ The EA uses the standard `Trade/Trade.mqh` library. The current code has no Pyth
 
 1. Download the project files from GitHub.
 2. In MetaTrader 5, select **File → Open Data Folder** to open that terminal's data directory.
-3. Copy `breaker_fork_v0.1.6.mq5` to `MQL5/Indicators/breaker_fork/`.
-4. Copy `breaker_fork_ea_v0.1.6.mq5` to `MQL5/Experts/breaker_fork/`. Create the `breaker_fork` subfolders if needed.
+3. Copy `breaker_mfe_v0.1.6.mq5` to `MQL5/Indicators/breaker_mfe/`.
+4. Copy `breaker_mfe_ea_v0.1.6.mq5` to `MQL5/Experts/breaker_mfe/`. Create the `breaker_mfe` subfolders if needed.
 5. Open each source in MetaEditor and use **F7 / Compile**. Compilation produces an `.ex5` file.
 6. Refresh the terminal's Navigator and attach the desired component to your selected symbol and timeframe chart.
 7. For the EA, review session times, risk parameters, and Magic Number settings, then enable Algo Trading permission.
@@ -238,11 +238,11 @@ Evaluate the EA in Strategy Tester using a specified symbol, timeframe, and date
 ## Files and versioning
 
 ```text
-spirit-breaker/
+breaker_mfe/
 ├── README.md                         # Persian guide for the current version
 ├── README.en.md                      # English guide for the current version
-├── breaker_fork_v0.1.6.mq5            # Current indicator source
-└── breaker_fork_ea_v0.1.6.mq5         # Current EA source
+├── breaker_mfe_v0.1.6.mq5            # Current indicator source
+└── breaker_mfe_ea_v0.1.6.mq5         # Current EA source
 ```
 
 This repository provides only the `v0.1.6` sources and the Persian and English READMEs for that version.

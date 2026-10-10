@@ -1,39 +1,72 @@
-#property copyright "breaker_fork"
+#property copyright "breaker_mfe"
 #property link      ""
-#include <Trade/Trade.mqh>
 #property version   "1.000"
 /*
-breaker_fork EA porting notes
-Version: breaker_fork v0.1.6
+breaker_mfe indicator porting notes
+Version: breaker_mfe v0.1.6
 
-Runtime model:
-- Process only on a newly opened chart candle, which means the previous
-  candle has closed.
-- Copy market data from shift 1, excluding the current forming candle.
-- Build visual markers and trade decisions from the same closed-candle arrays.
-- Execute market orders only when the signal belongs to the most recent
-  closed candle.
+Purpose:
+- Draw the visual model used by the breaker_mfe EA.
+- Keep all calculations on closed chart candles.
+- Mark start/end time, Fresh Fractals, Buyer/Seller direction, reversals,
+  Dragon entries, and stop candles.
 
 Porting map:
-- Account/security: BREAKER_ALLOWED_ACCOUNT_NUMBER, AccountIsAllowedToTrade.
-- Lot/risk: CalculateLotSize, LossStepLotMultiplier, RefreshLossStepState.
-- Trade execution: TryOpenDragonTrade, HasOpenBreakerPosition.
-- Break Even: ManageBreakEven, CurrentSpreadDistance, MinimumStopDistance.
+- Time/session helpers: MinutesOfDay, ClockOnDate, DayStart,
+  EndTimeForDay, TimeFallsInsideBar.
 - Fresh Fractals: IsUpperBillWilliamsFractal, IsLowerBillWilliamsFractal,
-  HasCloseAbove, HasCloseBelow, FindNearestFreshFractalForDay.
+  HasCloseAbove, HasCloseBelow, FindNearestFreshFractalForDay,
+  ScanUnbrokenFractalsRange.
 - Direction/reversal: DetermineInitialFreshFractalSignalForDay,
   ScanFreshFractalReversalForDay, ScanFreshFractalSignalForDay.
-- Dragon phases: TryDragonPhaseOne, RunDragonPhaseTwo,
+- Dragon logic: TryDragonPhaseOne, RunDragonPhaseTwo,
   ProcessDragonPhasesForSegment.
+- Rendering only: DrawMarkerObject, DrawSignalMarker, DrawReversalMarker,
+  DrawDragonCircle, BuildTimeMarkers.
 */
+#property indicator_chart_window
+#property indicator_plots 8
+#property indicator_buffers 8
 
+#property indicator_label1 "Start time"
+#property indicator_type1 DRAW_ARROW
+#property indicator_color1 clrLimeGreen
+#property indicator_width1 2
 
+#property indicator_label2 "End time"
+#property indicator_type2 DRAW_ARROW
+#property indicator_color2 clrTomato
+#property indicator_width2 2
 
+#property indicator_label3 "Upper Fresh Fractal"
+#property indicator_type3 DRAW_ARROW
+#property indicator_color3 clrOrange
+#property indicator_width3 2
 
+#property indicator_label4 "Lower Fresh Fractal"
+#property indicator_type4 DRAW_ARROW
+#property indicator_color4 clrOrange
+#property indicator_width4 2
 
+#property indicator_label5 "Buyer signal"
+#property indicator_type5 DRAW_ARROW
+#property indicator_color5 clrLimeGreen
+#property indicator_width5 2
 
+#property indicator_label6 "Seller signal"
+#property indicator_type6 DRAW_ARROW
+#property indicator_color6 clrRed
+#property indicator_width6 2
 
+#property indicator_label7 "Buyer reversal"
+#property indicator_type7 DRAW_ARROW
+#property indicator_color7 clrLimeGreen
+#property indicator_width7 2
 
+#property indicator_label8 "Seller reversal"
+#property indicator_type8 DRAW_ARROW
+#property indicator_color8 clrRed
+#property indicator_width8 2
 
 enum ENUM_BREAKER_TIME_SOURCE
 {
@@ -42,18 +75,12 @@ enum ENUM_BREAKER_TIME_SOURCE
    BREAKER_TIME_LOCAL  = 2
 };
 
-const long BREAKER_ALLOWED_ACCOUNT_NUMBER = 0;
-
-input double InpRiskPercent = 1.0;
-input double InpBreakEvenMultiplier = 1.5;
-input double InpTargetRiskReward = 2.0;
-input double InpStopOffsetPips = 1.0;
-input bool InpSkipTradeIfLotBelowMinimum = false;
 input int InpStartHour = 16;
 input int InpStartMinute = 30;
 input int InpEndHour = 18;
 input int InpEndMinute = 0;
 input ENUM_BREAKER_TIME_SOURCE InpTimeSource = BREAKER_TIME_CHART;
+input bool InpShowStatusOnChart = true;
 input bool InpShowTimeMarkers = true;
 input color InpStartMarkerColor = clrLimeGreen;
 input color InpEndMarkerColor = clrTomato;
@@ -76,20 +103,9 @@ input color InpStopCircleColor = clrYellow;
 input int InpDragonMarkerOffsetPoints = 55;
 input int InpDragonMarkerSize = 2;
 input bool InpDrawChartObjects = true;
-input bool InpEnableTrading = true;
-input bool InpEnableLossStepMoneyManagement = true;
-input int InpLossStepHistoryDays = 3650;
-input int InpMaxBarsToScan = 5000;
-input bool InpUseMagicNumber = false;
-input long InpMagicNumber = 110010;
-input bool InpFilterHistoryByMagicNumber = false;
-input string InpTradeComment = "";
-input bool InpOnePositionPerSymbol = true;
-input bool InpEnableMfeMaeReport = true;
-input bool InpMfeMaeConservativeSameBar = true;
 
-const string BREAKER_VERSION = "breaker_fork v0.1.6";
-const string BREAKER_OBJECT_PREFIX = "breaker_fork_ea_v0_1_6_";
+const string BREAKER_VERSION = "breaker_mfe v0.1.6";
+const string BREAKER_OBJECT_PREFIX = "breaker_mfe_v0_1_6_";
 const int BREAKER_MARKER_ARROW = 159;
 const int BREAKER_UP_TRIANGLE = 217;
 const int BREAKER_DOWN_TRIANGLE = 218;
@@ -109,50 +125,6 @@ datetime LastFractalScanDay = 0;
 bool FractalBuffersInitialized = false;
 bool TimeMarkersInitialized = false;
 datetime LastProcessedBarOpen = 0;
-datetime CurrentClosedSignalBarTime = 0;
-bool TradeEngineReady = false;
-int ConsecutiveStopLosses = 0;
-CTrade BreakerTrade;
-
-struct SBreakerMfeMaeRecord
-{
-   bool active;
-   bool buyer;
-   datetime entryTime;
-   datetime sessionEndTime;
-   double entryPrice;
-   double stopLoss;
-   double targetPrice;
-   double riskDistance;
-   double mfeR;
-   double maeR;
-   double lastCloseR;
-   int barsTracked;
-   string segmentLabel;
-   string initialDirection;
-   string initialSignalReason;
-   datetime initialSignalTime;
-   double upperFreshPrice;
-   double lowerFreshPrice;
-   bool hasUpperFresh;
-   bool hasLowerFresh;
-   string entryReason;
-   datetime dragonTime;
-   double dragonLevel;
-   datetime motherTime;
-   datetime stopCandleTime;
-   double stopCandlePrice;
-};
-
-SBreakerMfeMaeRecord MfeMaeRecord;
-string AnalysisSegmentLabel = "";
-string AnalysisInitialDirection = "";
-string AnalysisInitialSignalReason = "";
-datetime AnalysisInitialSignalTime = 0;
-double AnalysisUpperFreshPrice = 0.0;
-double AnalysisLowerFreshPrice = 0.0;
-bool AnalysisHasUpperFresh = false;
-bool AnalysisHasLowerFresh = false;
 
 int MinutesOfDay(const int hour, const int minute)
 {
@@ -173,12 +145,6 @@ bool InputsAreValid()
       return false;
 
    if(InpFractalLookbackDays < 1)
-      return false;
-
-   if(BREAKER_ALLOWED_ACCOUNT_NUMBER < 0 || InpMagicNumber < 0)
-      return false;
-
-   if(InpRiskPercent <= 0.0 || InpLossStepHistoryDays < 1 || InpTargetRiskReward <= 0.0 || InpBreakEvenMultiplier <= 0.0 || InpStopOffsetPips < 0.0 || InpMaxBarsToScan < 100)
       return false;
 
    return MinutesOfDay(InpStartHour, InpStartMinute) != MinutesOfDay(InpEndHour, InpEndMinute);
@@ -691,304 +657,6 @@ void DrawDragonCircle(
    DrawMarkerObject(suffix, markerTime, markerPrice, BREAKER_MARKER_ARROW, markerColor, InpDragonMarkerSize);
 }
 
-double NormalizeTradePrice(const double price)
-{
-   return NormalizeDouble(price, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS));
-}
-
-double PipSize()
-{
-   const int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-   if(digits == 3 || digits == 5)
-      return _Point * 10.0;
-
-   return _Point;
-}
-
-double CurrentSpreadDistance()
-{
-   const double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   const double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-
-   if(ask > 0.0 && bid > 0.0 && ask >= bid)
-      return ask - bid;
-
-   const long spreadPoints = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-   if(spreadPoints > 0)
-      return spreadPoints * _Point;
-
-   return 0.0;
-}
-
-double MinimumStopDistance()
-{
-   const long stopLevelPoints = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
-   if(stopLevelPoints <= 0)
-      return 0.0;
-
-   return stopLevelPoints * _Point;
-}
-
-bool IsClosedDealEntry(const ENUM_DEAL_ENTRY entry)
-{
-   return entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_INOUT || entry == DEAL_ENTRY_OUT_BY;
-}
-
-double DealNetProfit(const ulong ticket)
-{
-   return HistoryDealGetDouble(ticket, DEAL_PROFIT)
-      + HistoryDealGetDouble(ticket, DEAL_SWAP)
-      + HistoryDealGetDouble(ticket, DEAL_COMMISSION);
-}
-
-bool HistoryDealMatchesBreaker(const ulong ticket)
-{
-   if(HistoryDealGetString(ticket, DEAL_SYMBOL) != _Symbol)
-      return false;
-
-   if(InpFilterHistoryByMagicNumber
-      && (long)HistoryDealGetInteger(ticket, DEAL_MAGIC) != InpMagicNumber)
-      return false;
-
-   return true;
-}
-
-void RefreshLossStepState()
-{
-   ConsecutiveStopLosses = 0;
-
-   if(!InpEnableLossStepMoneyManagement)
-      return;
-
-   const datetime toTime = TimeCurrent();
-   const datetime fromTime = toTime - (datetime)MathMax(InpLossStepHistoryDays, 1) * 86400;
-
-   if(!HistorySelect(fromTime, toTime))
-      return;
-
-   const int totalDeals = HistoryDealsTotal();
-   for(int i = 0; i < totalDeals; i++)
-   {
-      const ulong ticket = HistoryDealGetTicket(i);
-      if(ticket == 0)
-         continue;
-
-      if(!HistoryDealMatchesBreaker(ticket))
-         continue;
-
-      const ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
-      if(!IsClosedDealEntry(entry))
-         continue;
-
-      const ENUM_DEAL_REASON reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(ticket, DEAL_REASON);
-      if(reason == DEAL_REASON_TP)
-      {
-         ConsecutiveStopLosses = 0;
-         continue;
-      }
-
-      if(reason == DEAL_REASON_SL && DealNetProfit(ticket) < 0.0)
-         ConsecutiveStopLosses++;
-   }
-}
-
-double LossStepLotMultiplier()
-{
-   if(!InpEnableLossStepMoneyManagement)
-      return 1.0;
-
-   if(ConsecutiveStopLosses >= 4)
-      return 0.25;
-
-   if(ConsecutiveStopLosses >= 3)
-      return 0.5;
-
-   return 1.0;
-}
-
-bool HasOpenBreakerPosition()
-{
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      const ulong ticket = PositionGetTicket(i);
-      if(ticket == 0)
-         continue;
-
-      if(!PositionSelectByTicket(ticket))
-         continue;
-
-      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
-         continue;
-
-      if(InpUseMagicNumber
-         && (long)PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
-         continue;
-
-      return true;
-   }
-
-   return false;
-}
-
-double CalculateLotSize(const double stopLossPriceDistance)
-{
-   if(stopLossPriceDistance <= 0.0)
-      return 0.0;
-
-   const double riskMoney = AccountInfoDouble(ACCOUNT_BALANCE) * InpRiskPercent / 100.0;
-   const double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   const double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   const double volumeStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-   const double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   const double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-
-   if(tickValue <= 0.0 || tickSize <= 0.0 || volumeStep <= 0.0)
-      return 0.0;
-
-   const double lossPerLot = (stopLossPriceDistance / tickSize) * tickValue;
-   if(lossPerLot <= 0.0)
-      return 0.0;
-
-   double lots = (riskMoney / lossPerLot) * LossStepLotMultiplier();
-   if(InpSkipTradeIfLotBelowMinimum && lots < minLot)
-      return 0.0;
-
-   lots = MathMax(lots, minLot);
-   lots = MathMin(lots, maxLot);
-
-   int digits = 0;
-   if(volumeStep < 1.0)
-      digits = (int)MathRound(-MathLog10(volumeStep));
-
-   return NormalizeDouble(lots, digits);
-}
-
-bool IsMostRecentClosedSignal(const datetime signalTime)
-{
-   return TradeEngineReady && signalTime == CurrentClosedSignalBarTime;
-}
-
-bool AccountIsAllowedToTrade()
-{
-   if(BREAKER_ALLOWED_ACCOUNT_NUMBER == 0)
-      return true;
-
-   return AccountInfoInteger(ACCOUNT_LOGIN) == BREAKER_ALLOWED_ACCOUNT_NUMBER;
-}
-
-void TryOpenDragonTrade(
-   const bool buyerDirection,
-   const datetime signalTime,
-   const double signalClosePrice,
-   const double stopPrice
-)
-{
-   if(!InpEnableTrading || !IsMostRecentClosedSignal(signalTime))
-      return;
-
-   if(!AccountIsAllowedToTrade())
-      return;
-
-   if(InpOnePositionPerSymbol && HasOpenBreakerPosition())
-      return;
-
-   RefreshLossStepState();
-
-   double entryReference = signalClosePrice;
-   const double stopBuffer = MathMax(InpStopOffsetPips, 0.0) * PipSize();
-
-   if(buyerDirection)
-   {
-      double sl = NormalizeTradePrice(stopPrice - stopBuffer);
-      if(sl >= entryReference)
-         return;
-
-      const double distance = entryReference - sl;
-      const double lots = CalculateLotSize(distance);
-      if(lots <= 0.0)
-         return;
-
-      const double tp = NormalizeTradePrice(entryReference + distance * InpTargetRiskReward);
-      BreakerTrade.Buy(lots, _Symbol, 0.0, sl, tp, InpTradeComment);
-      return;
-   }
-
-   double sl = NormalizeTradePrice(stopPrice + stopBuffer);
-   if(sl <= entryReference)
-      return;
-
-   const double distance = sl - entryReference;
-   const double lots = CalculateLotSize(distance);
-   if(lots <= 0.0)
-      return;
-
-   const double tp = NormalizeTradePrice(entryReference - distance * InpTargetRiskReward);
-   BreakerTrade.Sell(lots, _Symbol, 0.0, sl, tp, InpTradeComment);
-}
-
-void ManageBreakEven()
-{
-   if(!InpEnableTrading)
-      return;
-
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      const ulong ticket = PositionGetTicket(i);
-      if(ticket == 0 || !PositionSelectByTicket(ticket))
-         continue;
-
-      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
-         continue;
-
-      if(InpUseMagicNumber
-         && (long)PositionGetInteger(POSITION_MAGIC) != InpMagicNumber)
-         continue;
-
-      const long type = PositionGetInteger(POSITION_TYPE);
-      const double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-      const double sl = PositionGetDouble(POSITION_SL);
-      const double tp = PositionGetDouble(POSITION_TP);
-
-      if(type == POSITION_TYPE_BUY)
-      {
-         if(sl <= 0.0 || sl >= openPrice)
-            continue;
-
-         const double distance = openPrice - sl;
-         const double spreadDistance = CurrentSpreadDistance();
-         const double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         const double newStopLoss = NormalizeTradePrice(openPrice + spreadDistance);
-         const double maxStopLoss = NormalizeTradePrice(bid - MinimumStopDistance());
-
-         if(bid - openPrice >= distance * InpBreakEvenMultiplier
-            && newStopLoss > sl
-            && newStopLoss < bid
-            && newStopLoss <= maxStopLoss)
-            BreakerTrade.PositionModify(ticket, newStopLoss, tp);
-
-         continue;
-      }
-
-      if(type == POSITION_TYPE_SELL)
-      {
-         if(sl <= 0.0 || sl <= openPrice)
-            continue;
-
-         const double distance = sl - openPrice;
-         const double spreadDistance = CurrentSpreadDistance();
-         const double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         const double newStopLoss = NormalizeTradePrice(openPrice - spreadDistance);
-         const double minStopLoss = NormalizeTradePrice(ask + MinimumStopDistance());
-
-         if(openPrice - ask >= distance * InpBreakEvenMultiplier
-            && newStopLoss < sl
-            && newStopLoss > ask
-            && newStopLoss >= minStopLoss)
-            BreakerTrade.PositionModify(ticket, newStopLoss, tp);
-      }
-   }
-}
-
 void DrawDragonEntryAndStop(
    const bool buyerDirection,
    const int entryIndex,
@@ -998,8 +666,7 @@ void DrawDragonEntryAndStop(
    const double markerOffset,
    const datetime &time[],
    const double &high[],
-   const double &low[],
-   const double &close[]
+   const double &low[]
 )
 {
    if(entryIndex < 0 || dragonIndex < 0 || motherIndex < 0)
@@ -1011,10 +678,7 @@ void DrawDragonEntryAndStop(
 
       const int stopIndex = LowestLowIndexBetween(time[motherIndex], time[entryIndex], ratesTotal, time, low);
       if(stopIndex >= 0)
-      {
          DrawDragonCircle("dragon_stop", time[stopIndex], low[stopIndex] - markerOffset, InpStopCircleColor);
-         TryOpenDragonTrade(true, time[entryIndex], close[entryIndex], low[stopIndex]);
-      }
 
       return;
    }
@@ -1023,10 +687,7 @@ void DrawDragonEntryAndStop(
 
    const int stopIndex = HighestHighIndexBetween(time[motherIndex], time[entryIndex], ratesTotal, time, high);
    if(stopIndex >= 0)
-   {
       DrawDragonCircle("dragon_stop", time[stopIndex], high[stopIndex] + markerOffset, InpStopCircleColor);
-      TryOpenDragonTrade(false, time[entryIndex], close[entryIndex], high[stopIndex]);
-   }
 }
 
 bool TryDragonPhaseOne(
@@ -1089,7 +750,7 @@ bool TryDragonPhaseOne(
 
          if(close[currentIndex] > high[dragonIndex])
          {
-            DrawDragonEntryAndStop(true, currentIndex, dragonIndex, motherIndex, ratesTotal, markerOffset, time, high, low, close);
+            DrawDragonEntryAndStop(true, currentIndex, dragonIndex, motherIndex, ratesTotal, markerOffset, time, high, low);
             return true;
          }
       }
@@ -1103,7 +764,7 @@ bool TryDragonPhaseOne(
 
          if(close[currentIndex] < low[dragonIndex])
          {
-            DrawDragonEntryAndStop(false, currentIndex, dragonIndex, motherIndex, ratesTotal, markerOffset, time, high, low, close);
+            DrawDragonEntryAndStop(false, currentIndex, dragonIndex, motherIndex, ratesTotal, markerOffset, time, high, low);
             return true;
          }
       }
@@ -1165,7 +826,6 @@ void RunDragonPhaseTwo(
          {
             DrawDragonCircle("dragon_entry", time[currentIndex], low[currentIndex] - markerOffset, InpEntryCircleColor);
             DrawDragonCircle("dragon_stop", time[masterIndex], low[masterIndex] - markerOffset, InpStopCircleColor);
-            TryOpenDragonTrade(true, time[currentIndex], close[currentIndex], low[masterIndex]);
             return;
          }
 
@@ -1177,7 +837,6 @@ void RunDragonPhaseTwo(
             {
                DrawDragonCircle("dragon_entry", time[currentIndex], low[currentIndex] - markerOffset, InpEntryCircleColor);
                DrawDragonCircle("dragon_stop", time[masterIndex], low[masterIndex] - markerOffset, InpStopCircleColor);
-               TryOpenDragonTrade(true, time[currentIndex], close[currentIndex], low[masterIndex]);
                return;
             }
          }
@@ -1194,7 +853,6 @@ void RunDragonPhaseTwo(
          {
             DrawDragonCircle("dragon_entry", time[currentIndex], high[currentIndex] + markerOffset, InpEntryCircleColor);
             DrawDragonCircle("dragon_stop", time[masterIndex], high[masterIndex] + markerOffset, InpStopCircleColor);
-            TryOpenDragonTrade(false, time[currentIndex], close[currentIndex], high[masterIndex]);
             return;
          }
 
@@ -1206,7 +864,6 @@ void RunDragonPhaseTwo(
             {
                DrawDragonCircle("dragon_entry", time[currentIndex], high[currentIndex] + markerOffset, InpEntryCircleColor);
                DrawDragonCircle("dragon_stop", time[masterIndex], high[masterIndex] + markerOffset, InpStopCircleColor);
-               TryOpenDragonTrade(false, time[currentIndex], close[currentIndex], high[masterIndex]);
                return;
             }
          }
@@ -1679,153 +1336,83 @@ string TimeSourceLabel()
 
 void UpdateBreakerStatus(const datetime now, const bool isActive)
 {
-   // Status text is intentionally disabled so the EA leaves no chart comment.
-}
-
-void ResizeWorkBuffers(const int ratesTotal)
-{
-   ArrayResize(StartMarkerBuffer, ratesTotal);
-   ArrayResize(EndMarkerBuffer, ratesTotal);
-   ArrayResize(UpperFractalBuffer, ratesTotal);
-   ArrayResize(LowerFractalBuffer, ratesTotal);
-   ArrayResize(BuyerSignalBuffer, ratesTotal);
-   ArrayResize(SellerSignalBuffer, ratesTotal);
-   ArrayResize(BuyerReversalBuffer, ratesTotal);
-   ArrayResize(SellerReversalBuffer, ratesTotal);
-
-   ArraySetAsSeries(StartMarkerBuffer, true);
-   ArraySetAsSeries(EndMarkerBuffer, true);
-   ArraySetAsSeries(UpperFractalBuffer, true);
-   ArraySetAsSeries(LowerFractalBuffer, true);
-   ArraySetAsSeries(BuyerSignalBuffer, true);
-   ArraySetAsSeries(SellerSignalBuffer, true);
-   ArraySetAsSeries(BuyerReversalBuffer, true);
-   ArraySetAsSeries(SellerReversalBuffer, true);
-}
-
-bool CopyMarketData(
-   datetime &time[],
-   double &open[],
-   double &high[],
-   double &low[],
-   double &close[]
-)
-{
-   const int barsToCopy = MathMax(InpMaxBarsToScan, 100);
-
-   if(CopyTime(_Symbol, _Period, 1, barsToCopy, time) <= 0)
-      return false;
-
-   const int ratesTotal = ArraySize(time);
-   if(ratesTotal < 10)
-      return false;
-
-   ArrayResize(open, ratesTotal);
-   ArrayResize(high, ratesTotal);
-   ArrayResize(low, ratesTotal);
-   ArrayResize(close, ratesTotal);
-
-   if(CopyOpen(_Symbol, _Period, 1, ratesTotal, open) != ratesTotal)
-      return false;
-   if(CopyHigh(_Symbol, _Period, 1, ratesTotal, high) != ratesTotal)
-      return false;
-   if(CopyLow(_Symbol, _Period, 1, ratesTotal, low) != ratesTotal)
-      return false;
-   if(CopyClose(_Symbol, _Period, 1, ratesTotal, close) != ratesTotal)
-      return false;
-
-   ArraySetAsSeries(time, true);
-   ArraySetAsSeries(open, true);
-   ArraySetAsSeries(high, true);
-   ArraySetAsSeries(low, true);
-   ArraySetAsSeries(close, true);
-
-   ResizeWorkBuffers(ratesTotal);
-   return true;
-}
-
-datetime MostRecentClosedBarOpen(const int ratesTotal, const bool series, const datetime &time[])
-{
-   if(ratesTotal < 1)
-      return 0;
-
-   if(series)
-      return time[0];
-
-   return time[ratesTotal - 1];
-}
-
-void ProcessClosedCandle()
-{
-   datetime time[];
-   double open[];
-   double high[];
-   double low[];
-   double close[];
-
-   if(!CopyMarketData(time, open, high, low, close))
+   if(!InpShowStatusOnChart)
       return;
 
-   const int ratesTotal = ArraySize(time);
-   const bool series = ArrayGetAsSeries(time);
-   const datetime currentBarOpen = iTime(_Symbol, _Period, 0);
+   MqlDateTime parts;
+   TimeToStruct(now, parts);
 
-   if(currentBarOpen == 0 || currentBarOpen == LastProcessedBarOpen)
-      return;
-
-   LastProcessedBarOpen = currentBarOpen;
-   CurrentClosedSignalBarTime = MostRecentClosedBarOpen(ratesTotal, series, time);
-
-   const datetime updateTime = currentBarOpen;
-   const bool canWork = IsWithinWorkingTime(updateTime);
-   const int periodSeconds = SafePeriodSeconds();
-   const double markerOffset = MathMax(InpMarkerOffsetPoints, 0) * _Point;
-   const double fractalOffset = MathMax(InpFractalMarkerOffsetPoints, 0) * _Point;
-
-   if(!TimeMarkersInitialized)
-   {
-      BuildTimeMarkers(ratesTotal, series, periodSeconds, markerOffset, time, low);
-      TimeMarkersInitialized = true;
-   }
-
-   if(!FractalBuffersInitialized)
-      RunInitialFractalPreview(updateTime, ratesTotal, series, fractalOffset, time, open, high, low, close);
-
-   datetime scanDayStart = 0;
-   datetime scanStartTime = 0;
-   const bool scanDue = FractalScanIsDue(updateTime, scanDayStart, scanStartTime);
-
-   if(scanDue)
-   {
-      ScanUnbrokenFractalsRange(scanDayStart, ratesTotal, series, fractalOffset, time, open, high, low, close);
-      LastFractalScanDay = scanDayStart;
-   }
-   else if(updateTime >= ClockOnDate(updateTime, InpStartHour, InpStartMinute)
-      && updateTime <= EndTimeForDay(DayStart(updateTime)))
-   {
-      ScanFreshFractalSignalForDay(DayStart(updateTime), ratesTotal, series, periodSeconds, MathMax(InpSignalMarkerOffsetPoints, 0) * _Point, time, open, high, low, close);
-   }
-
-   if(!TradeEngineReady)
-      TradeEngineReady = true;
-
-   UpdateBreakerStatus(updateTime, canWork);
-   ChartRedraw(0);
+   Comment(StringFormat(
+      "breaker %s\nStart time: %s\nEnd time: %s\nFractal lookback: %d days\nTime source: %s\nLast candle-close update: %02d:%02d\nStatus: %s\nFractal scan: %s",
+      BREAKER_VERSION,
+      FormatClock(InpStartHour, InpStartMinute),
+      FormatClock(InpEndHour, InpEndMinute),
+      MathMax(InpFractalLookbackDays, 1),
+      TimeSourceLabel(),
+      parts.hour,
+      parts.min,
+      isActive ? "ACTIVE" : "WAITING",
+      LastFractalScanDay == DayStart(now) ? "DONE" : "WAITING"
+   ));
 }
 
 int OnInit()
 {
+   DeleteBreakerObjects();
+   IndicatorSetString(INDICATOR_SHORTNAME, BREAKER_VERSION);
+   SetIndexBuffer(0, StartMarkerBuffer, INDICATOR_DATA);
+   SetIndexBuffer(1, EndMarkerBuffer, INDICATOR_DATA);
+   SetIndexBuffer(2, UpperFractalBuffer, INDICATOR_DATA);
+   SetIndexBuffer(3, LowerFractalBuffer, INDICATOR_DATA);
+   SetIndexBuffer(4, BuyerSignalBuffer, INDICATOR_DATA);
+   SetIndexBuffer(5, SellerSignalBuffer, INDICATOR_DATA);
+   SetIndexBuffer(6, BuyerReversalBuffer, INDICATOR_DATA);
+   SetIndexBuffer(7, SellerReversalBuffer, INDICATOR_DATA);
+
+   PlotIndexSetInteger(0, PLOT_ARROW, BREAKER_MARKER_ARROW);
+   PlotIndexSetInteger(1, PLOT_ARROW, BREAKER_MARKER_ARROW);
+   PlotIndexSetInteger(2, PLOT_ARROW, BREAKER_UP_TRIANGLE);
+   PlotIndexSetInteger(3, PLOT_ARROW, BREAKER_DOWN_TRIANGLE);
+   PlotIndexSetInteger(4, PLOT_ARROW, BREAKER_BUY_ARROW);
+   PlotIndexSetInteger(5, PLOT_ARROW, BREAKER_SELL_ARROW);
+   PlotIndexSetInteger(6, PLOT_ARROW, BREAKER_BUY_ARROW);
+   PlotIndexSetInteger(7, PLOT_ARROW, BREAKER_SELL_ARROW);
+   PlotIndexSetInteger(0, PLOT_LINE_COLOR, InpStartMarkerColor);
+   PlotIndexSetInteger(1, PLOT_LINE_COLOR, InpEndMarkerColor);
+   PlotIndexSetInteger(2, PLOT_LINE_COLOR, InpFractalMarkerColor);
+   PlotIndexSetInteger(3, PLOT_LINE_COLOR, InpFractalMarkerColor);
+   PlotIndexSetInteger(4, PLOT_LINE_COLOR, InpBuyerSignalColor);
+   PlotIndexSetInteger(5, PLOT_LINE_COLOR, InpSellerSignalColor);
+   PlotIndexSetInteger(6, PLOT_LINE_COLOR, InpBuyerSignalColor);
+   PlotIndexSetInteger(7, PLOT_LINE_COLOR, InpSellerSignalColor);
+   PlotIndexSetInteger(0, PLOT_LINE_WIDTH, InpMarkerSize);
+   PlotIndexSetInteger(1, PLOT_LINE_WIDTH, InpMarkerSize);
+   PlotIndexSetInteger(2, PLOT_LINE_WIDTH, InpFractalMarkerSize);
+   PlotIndexSetInteger(3, PLOT_LINE_WIDTH, InpFractalMarkerSize);
+   PlotIndexSetInteger(4, PLOT_LINE_WIDTH, InpSignalMarkerSize);
+   PlotIndexSetInteger(5, PLOT_LINE_WIDTH, InpSignalMarkerSize);
+   PlotIndexSetInteger(6, PLOT_LINE_WIDTH, InpSignalMarkerSize);
+   PlotIndexSetInteger(7, PLOT_LINE_WIDTH, InpSignalMarkerSize);
+   PlotIndexSetDouble(0, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+   PlotIndexSetDouble(1, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+   PlotIndexSetDouble(2, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+   PlotIndexSetDouble(3, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+   PlotIndexSetDouble(4, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+   PlotIndexSetDouble(5, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+   PlotIndexSetDouble(6, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+   PlotIndexSetDouble(7, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+
    if(!InputsAreValid())
    {
+      PrintFormat(
+         "breaker %s: invalid inputs. Start=%s End=%s LookbackDays=%d",
+         BREAKER_VERSION,
+         FormatClock(InpStartHour, InpStartMinute),
+         FormatClock(InpEndHour, InpEndMinute),
+         InpFractalLookbackDays
+      );
       return INIT_PARAMETERS_INCORRECT;
    }
-
-   BreakerTrade.SetDeviationInPoints(20);
-   if(InpUseMagicNumber)
-      BreakerTrade.SetExpertMagicNumber(InpMagicNumber);
-
-   RefreshLossStepState();
-   DeleteBreakerObjects();
 
    const datetime now = BreakerNow();
    UpdateBreakerStatus(now, IsWithinWorkingTime(now));
@@ -1834,12 +1421,83 @@ int OnInit()
 
 void OnDeinit(const int reason)
 {
+   if(InpShowStatusOnChart)
+      Comment("");
+
+   DeleteBreakerObjects();
 }
 
-void OnTick()
+int OnCalculate(
+   const int rates_total,
+   const int prev_calculated,
+   const datetime &time[],
+   const double &open[],
+   const double &high[],
+   const double &low[],
+   const double &close[],
+   const long &tick_volume[],
+   const long &volume[],
+   const int &spread[]
+)
 {
-   ManageBreakEven();
-   ProcessClosedCandle();
+   ArraySetAsSeries(StartMarkerBuffer, ArrayGetAsSeries(time));
+   ArraySetAsSeries(EndMarkerBuffer, ArrayGetAsSeries(time));
+   ArraySetAsSeries(UpperFractalBuffer, ArrayGetAsSeries(time));
+   ArraySetAsSeries(LowerFractalBuffer, ArrayGetAsSeries(time));
+   ArraySetAsSeries(BuyerSignalBuffer, ArrayGetAsSeries(time));
+   ArraySetAsSeries(SellerSignalBuffer, ArrayGetAsSeries(time));
+   ArraySetAsSeries(BuyerReversalBuffer, ArrayGetAsSeries(time));
+   ArraySetAsSeries(SellerReversalBuffer, ArrayGetAsSeries(time));
+
+   const bool series = ArrayGetAsSeries(time);
+   const datetime currentBarOpen = CurrentBarOpen(rates_total, series, time);
+
+   if(!ShouldProcessClosedCandle(currentBarOpen, prev_calculated))
+      return rates_total;
+
+   LastProcessedBarOpen = currentBarOpen;
+
+   const datetime updateTime = currentBarOpen;
+   const bool canWork = IsWithinWorkingTime(updateTime);
+   const int periodSeconds = SafePeriodSeconds();
+   const double markerOffset = MathMax(InpMarkerOffsetPoints, 0) * _Point;
+   const double fractalOffset = MathMax(InpFractalMarkerOffsetPoints, 0) * _Point;
+
+   if(!TimeMarkersInitialized || prev_calculated == 0)
+   {
+      BuildTimeMarkers(rates_total, series, periodSeconds, markerOffset, time, low);
+      TimeMarkersInitialized = true;
+   }
+
+   if(!FractalBuffersInitialized)
+   {
+      RunInitialFractalPreview(updateTime, rates_total, series, fractalOffset, time, open, high, low, close);
+   }
+
+   datetime scanDayStart = 0;
+   datetime scanStartTime = 0;
+   const bool scanDue = FractalScanIsDue(updateTime, scanDayStart, scanStartTime);
+
+   if(scanDue)
+   {
+      ScanUnbrokenFractalsRange(scanDayStart, rates_total, series, fractalOffset, time, open, high, low, close);
+      LastFractalScanDay = scanDayStart;
+   }
+   else if(updateTime >= ClockOnDate(updateTime, InpStartHour, InpStartMinute)
+      && updateTime <= EndTimeForDay(DayStart(updateTime)))
+   {
+      ScanFreshFractalSignalForDay(DayStart(updateTime), rates_total, series, periodSeconds, MathMax(InpSignalMarkerOffsetPoints, 0) * _Point, time, open, high, low, close);
+   }
+
+   UpdateBreakerStatus(updateTime, canWork);
+
+   ChartRedraw(0);
+
+   if(!canWork)
+      return rates_total;
+
+   // Future breaker logic will run only inside the configured time window.
+   return rates_total;
 }
 
 // توسعه داده توسط M.H.B
