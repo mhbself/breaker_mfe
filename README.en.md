@@ -238,31 +238,20 @@ Evaluate the EA in Strategy Tester using a specified symbol, timeframe, and date
 ## Files and versioning
 
 ```text
-breaker_fork/
-├── README.md                         # Main GitHub guide in Persian
-├── README.en.md                      # English guide
-├── breaker_fork.mq5                   # Unversioned indicator alias for v0.1.6
-├── breaker_fork_ea.mq5                # Unversioned EA alias for v0.1.6
+spirit-breaker/
+├── README.md                         # Persian guide for the current version
+├── README.en.md                      # English guide for the current version
 ├── breaker_fork_v0.1.6.mq5            # Current indicator source
-├── breaker_fork_ea_v0.1.6.mq5         # Current EA source
-├── CHANGELOG.md                      # Change history
-├── CHANGELOG_breaker_fork_v0.1.6.md   # Version-specific change history
-├── PORTING_GUIDE_breaker_fork_v0.1.6.md
-├── README_breaker_fork_v0.1.6.md      # Previous version-specific documentation
-└── ...                               # Earlier version files
+└── breaker_fork_ea_v0.1.6.mq5         # Current EA source
 ```
 
-Versions `v0.1.0` through `v0.1.6` are stored directly in this folder; there is currently no `versions/` directory. Unversioned files are convenience aliases for the terminal and were identical to the `v0.1.6` sources when checked for this documentation.
+This repository provides only the `v0.1.6` sources and the Persian and English READMEs for that version.
 
 Read the project version from filenames and the `BREAKER_VERSION` constant. The current source's `#property version` is `1.000`, which does not identify the project release version.
 
-## Documentation and development
+## Development
 
-- [Change history](CHANGELOG.md)
-- [v0.1.6 change history](CHANGELOG_breaker_fork_v0.1.6.md)
-- [Guide to porting the logic to another language](PORTING_GUIDE_breaker_fork_v0.1.6.md)
-
-When changing logic, review the indicator and EA together. Preserve closed-candle evaluation, the reversal-confirmation sequence, stop-candle selection, and Master confirmation resets. The porting guide helps explain the structure; when older descriptions differ from implementation, use the selected version's source as the reference.
+When changing logic, review the indicator and EA together. Preserve closed-candle evaluation, the reversal-confirmation sequence, stop-candle selection, and Master confirmation resets. The selected version's source is the reference for runtime behavior.
 
 For bug reports, include the source version, symbol, timeframe, Inputs, event time on the chart, and relevant Experts/Journal output. Remove confidential account information.
 
