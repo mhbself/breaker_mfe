@@ -2,7 +2,7 @@
 
 English | [فارسی](README.md)
 
-An **MQL5** indicator and Expert Advisor for displaying and trading **Fresh Fractal / Dragon** setups within a configurable session. Using the source name `breaker_fork` and forked from `breaker v0.11.18`, the project adds risk-based position sizing, reduced volume after losing stop-loss exits, and break-even management.
+An **MQL5** indicator and Expert Advisor for displaying and trading **Fresh Fractal / Dragon** setups within a configurable session. The project uses the source name `breaker_fork` and is forked from `breaker v0.11.18`. The original project also belonged to the same creator. This version adds risk-based position sizing, reduced volume after losing stop-loss exits, and break-even management.
 
 **Latest version in this folder: `v0.1.6`** · Documentation checked against source: `2026-10-11`
 
@@ -262,3 +262,5 @@ The current project files do not include a `LICENSE` file. The owner needs to sp
 ## Author's note
 
 Ever since I uploaded the file to AI, it hasn't worked.
+
+Developed by M.H.B

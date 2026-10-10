@@ -1499,3 +1499,5 @@ int OnCalculate(
    // Future breaker logic will run only inside the configured time window.
    return rates_total;
 }
+
+// توسعه داده توسط M.H.B

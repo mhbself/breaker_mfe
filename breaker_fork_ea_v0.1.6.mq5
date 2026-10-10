@@ -1841,3 +1841,5 @@ void OnTick()
    ManageBreakEven();
    ProcessClosedCandle();
 }
+
+// توسعه داده توسط M.H.B
