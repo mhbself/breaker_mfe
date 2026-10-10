@@ -242,11 +242,10 @@ spirit-breaker/
 ├── README.md                         # Persian guide for the current version
 ├── README.en.md                      # English guide for the current version
 ├── breaker_fork_v0.1.6.mq5            # Current indicator source
-├── breaker_fork_ea_v0.1.6.mq5         # Current EA source
-└── CHANGELOG_breaker_fork_v0.1.6.md   # Changelog accompanying this version
+└── breaker_fork_ea_v0.1.6.mq5         # Current EA source
 ```
 
-This repository provides the `v0.1.6` sources, the Persian and English READMEs, and the [changelog accompanying this version](CHANGELOG_breaker_fork_v0.1.6.md).
+This repository provides only the `v0.1.6` sources and the Persian and English READMEs for that version.
 
 Read the project version from filenames and the `BREAKER_VERSION` constant. The current source's `#property version` is `1.000`, which does not identify the project release version.
 
